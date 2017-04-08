@@ -23,6 +23,7 @@ caffe_default_properties(caffe)
 set_target_properties(caffe PROPERTIES
     VERSION   ${CAFFE_TARGET_VERSION}
     SOVERSION ${CAFFE_TARGET_SOVERSION}
+    CXX_STANDARD 11
     )
 
 # ---[ Tests
@@ -37,4 +38,6 @@ file(WRITE ${PROJECT_BINARY_DIR}/__init__.py)
 list(APPEND proto_python ${PROJECT_BINARY_DIR}/__init__.py)
 install(PROGRAMS ${proto_python} DESTINATION python/caffe/proto)
 
+set_property(TARGET caffe PROPERTY CXX_STANDARD 11)
+set(TARGET caffe CMAKE_CXX_STANDARD 11)
 

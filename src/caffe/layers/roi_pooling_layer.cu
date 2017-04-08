@@ -15,11 +15,18 @@ using std::min;
 
 namespace caffe {
 
+__device__ int wrap(int x, int n) {
+    x = x % n;
+    if (x < 0)
+        x += n;
+    return x;
+}
+
 template <typename Dtype>
 __global__ void ROIPoolForward(const int nthreads, const Dtype* bottom_data,
     const Dtype spatial_scale, const int channels, const int height,
     const int width, const int pooled_height, const int pooled_width,
-    const Dtype pad_ratio, const Dtype* bottom_rois, Dtype* top_data, int* argmax_data) {
+    const Dtype pad_ratio, const Dtype* bottom_rois, Dtype* top_data, int* argmax_data, bool ringpad) {
   CUDA_KERNEL_LOOP(index, nthreads) {
     // (n, c, ph, pw) is an element in the pooled output
     int pw = index % pooled_width;
@@ -65,8 +72,12 @@ __global__ void ROIPoolForward(const int nthreads, const Dtype* bottom_data,
     // Add roi offsets and clip to input boundaries
     hstart = min(max(hstart + roi_start_h, 0), height);
     hend = min(max(hend + roi_start_h, 0), height);
-    wstart = min(max(wstart + roi_start_w, 0), width);
-    wend = min(max(wend + roi_start_w, 0), width);
+    wstart = wstart + roi_start_w;
+    wend = wend + roi_start_w;
+    if (!ringpad) {
+      wstart = min(max(wstart, 0), width);
+      wend = min(max(wend, 0), width);
+    }
     bool is_empty = (hend <= hstart) || (wend <= wstart);
 
     // Define an empty pooling region to be zero
@@ -76,7 +87,7 @@ __global__ void ROIPoolForward(const int nthreads, const Dtype* bottom_data,
     bottom_data += (roi_batch_ind * channels + c) * height * width;
     for (int h = hstart; h < hend; ++h) {
       for (int w = wstart; w < wend; ++w) {
-        int bottom_index = h * width + w;
+        int bottom_index = h * width + (ringpad ? wrap(w, width) : w);
         if (bottom_data[bottom_index] > maxval) {
           maxval = bottom_data[bottom_index];
           maxidx = bottom_index;
@@ -99,7 +110,7 @@ void ROIPoolingLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
   // NOLINT_NEXT_LINE(whitespace/operators)
   ROIPoolForward<Dtype><<<CAFFE_GET_BLOCKS(count), CAFFE_CUDA_NUM_THREADS>>>(
       count, bottom_data, spatial_scale_, channels_, height_, width_,
-      pooled_height_, pooled_width_, pad_ratio_, bottom_rois, top_data, argmax_data);
+      pooled_height_, pooled_width_, pad_ratio_, bottom_rois, top_data, argmax_data, ringpad_);
   CUDA_POST_KERNEL_CHECK;
 }
 

@@ -46,9 +46,11 @@ class ImageGtDataLayer : public BasePrefetchingDataLayer<Dtype> {
 
   shared_ptr<Caffe::RNG> prefetch_rng_;
   vector<std::pair<std::string, vector<int> > > image_database_;
-  enum ImageGtField { X1, Y1, X2, Y2, LABEL, IGNORE, NUM };
+  enum ImageGtField { X1, Y1, X2, Y2, LABEL, IGNORE, L, H, W, TX, TY, TZ, RY, NUM };
   vector<vector<vector<float> > > windows_;
   vector<vector<vector<float> > > roni_windows_;
+  vector<vector<float> > proj_mat_;
+  vector<vector<float> > model_mat_;
   vector<Dtype> mean_values_;
   bool has_mean_values_;
   bool cache_images_;
@@ -61,6 +63,10 @@ class ImageGtDataLayer : public BasePrefetchingDataLayer<Dtype> {
   vector<int> image_list_;
   int list_id_;
   bool output_gt_boxes_;
+  bool output_projection_matrix_;
+  bool append_3d_info_;
+  bool use_panoramic_;
+  int gt_dim_;
 };
 
 }  // namespace caffe

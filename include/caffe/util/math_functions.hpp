@@ -14,7 +14,7 @@ namespace caffe {
 
 template <typename Dtype>
 Dtype BoxIOU(const Dtype x1, const Dtype y1, const Dtype w1, const Dtype h1,
-          const Dtype x2, const Dtype y2, const Dtype w2, const Dtype h2, const string mode);
+          const Dtype x2, const Dtype y2, const Dtype w2, const Dtype h2, const string& mode);
 
 // Caffe gemm provides a simpler interface to the gemm functions, with the
 // limitation that the data has to be contiguous in memory.
@@ -81,6 +81,10 @@ void caffe_rng_uniform(const int n, const Dtype a, const Dtype b, Dtype* r);
 
 template <typename Dtype>
 void caffe_rng_gaussian(const int n, const Dtype mu, const Dtype sigma,
+                        Dtype* r);
+
+template <typename Dtype>
+void caffe_rng_cauchy(const int n, const Dtype loc, const Dtype scale,
                         Dtype* r);
 
 template <typename Dtype>

@@ -18,6 +18,13 @@ using std::ceil;
 
 namespace caffe {
 
+inline int wrap(int x, int n) {
+    x = x % n;
+    if (x < 0)
+        x += n;
+    return x;
+}
+
 template <typename Dtype>
 void ROIPoolingLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
@@ -30,6 +37,7 @@ void ROIPoolingLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   pooled_width_ = roi_pool_param.pooled_w();
   spatial_scale_ = roi_pool_param.spatial_scale();
   pad_ratio_ = roi_pool_param.pad_ratio();
+  ringpad_ = roi_pool_param.ringpad();
   LOG(INFO) << "Spatial scale: " << spatial_scale_;
 }
 
@@ -106,8 +114,12 @@ void ROIPoolingLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
 
           hstart = min(max(hstart + roi_start_h, 0), height_);
           hend = min(max(hend + roi_start_h, 0), height_);
-          wstart = min(max(wstart + roi_start_w, 0), width_);
-          wend = min(max(wend + roi_start_w, 0), width_);
+          wstart = wstart + roi_start_w;
+          wend = wend + roi_start_w;
+          if (!ringpad_) {
+            wstart = min(max(wstart, 0), width_);
+            wend = min(max(wend, 0), width_);
+          }
 
           bool is_empty = (hend <= hstart) || (wend <= wstart);
 
@@ -119,7 +131,7 @@ void ROIPoolingLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
 
           for (int h = hstart; h < hend; ++h) {
             for (int w = wstart; w < wend; ++w) {
-              const int index = h * width_ + w;
+              const int index = h * width_ + (ringpad_ ? wrap(w, width_) : w);
               if (batch_data[index] > top_data[pool_index]) {
                 top_data[pool_index] = batch_data[index];
                 argmax_data[pool_index] = index;

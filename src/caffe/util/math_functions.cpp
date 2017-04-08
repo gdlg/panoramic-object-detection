@@ -11,7 +11,7 @@ namespace caffe {
 
 template <typename Dtype>
 Dtype BoxIOU(const Dtype x1, const Dtype y1, const Dtype w1, const Dtype h1,
-          const Dtype x2, const Dtype y2, const Dtype w2, const Dtype h2, const string mode) {
+          const Dtype x2, const Dtype y2, const Dtype w2, const Dtype h2, const string& mode) {
   if (w1<=0 || h1<=0 || w2<=0 || h2<=0) {
     return Dtype(0);
   }
@@ -36,11 +36,11 @@ Dtype BoxIOU(const Dtype x1, const Dtype y1, const Dtype w1, const Dtype h1,
 
 template
 float BoxIOU(const float x1, const float y1, const float w1, const float h1,
-          const float x2, const float y2, const float w2, const float h2, const string mode);
+          const float x2, const float y2, const float w2, const float h2, const string& mode);
 
 template
 double BoxIOU(const double x1, const double y1, const double w1, const double h1,
-          const double x2, const double y2, const double w2, const double h2, const string mode);
+          const double x2, const double y2, const double w2, const double h2, const string& mode);
 
 template<>
 void caffe_cpu_gemm<float>(const CBLAS_TRANSPOSE TransA,
@@ -317,6 +317,28 @@ void caffe_rng_gaussian<float>(const int n, const float mu,
 template
 void caffe_rng_gaussian<double>(const int n, const double mu,
                                 const double sigma, double* r);
+
+template <typename Dtype>
+void caffe_rng_cauchy(const int n, const Dtype loc,
+                        const Dtype scale, Dtype* r) {
+  CHECK_GE(n, 0);
+  CHECK(r);
+  CHECK_GT(scale, 0);
+  boost::normal_distribution<Dtype> random_distribution(loc, scale);
+  boost::variate_generator<caffe::rng_t*, boost::normal_distribution<Dtype> >
+      variate_generator(caffe_rng(), random_distribution);
+  for (int i = 0; i < n; ++i) {
+    r[i] = variate_generator();
+  }
+}
+
+template
+void caffe_rng_cauchy<float>(const int n, const float loc,
+                               const float scale, float* r);
+
+template
+void caffe_rng_cauchy<double>(const int n, const double loc,
+                                const double scale, double* r);
 
 template <typename Dtype>
 void caffe_rng_bernoulli(const int n, const Dtype p, int* r) {

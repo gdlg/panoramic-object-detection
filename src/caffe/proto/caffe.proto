@@ -411,6 +411,7 @@ message LayerParameter {
   optional ProposalTargetParameter proposal_target_param = 152;
   optional ImageGtDataParameter image_gt_data_param = 153;
   optional BBoxRegParameter bbox_reg_param = 154;
+  optional RingPadParameter ring_pad_param = 158;
 }
 
 // Message that stores parameters used to apply transformation
@@ -549,6 +550,11 @@ message BiasParameter {
   // Default is the zero (0) initialization, resulting in the BiasLayer
   // initially performing the identity operation.
   optional FillerParameter filler = 3;
+}
+
+message RingPadParameter {
+  optional int32 axis = 1 [default = 1];
+  optional int32 pad = 2 [default = 1];
 }
 
 message ContrastiveLossParameter {
@@ -1234,6 +1240,9 @@ message ImageGtDataParameter {
   optional bool cache_images = 25 [default = false];
   // append root_folder to locate images
   optional string root_folder = 26 [default = ""];
+  optional bool output_projection_matrix = 27 [default = false];
+  optional bool append_3d_info = 28 [default = false];
+  optional bool use_panoramic = 32 [default = false];
 }
 
 message SPPParameter {
@@ -1262,6 +1271,7 @@ message ROIPoolingParameter {
   // input scale to the scale used when pooling
   optional float spatial_scale = 3 [default = 1];
   optional float pad_ratio = 4 [default = 0];
+  optional bool ringpad = 5 [default = false];
 }
 
 // Message that stores parameters used by SmoothL1LossParameter
@@ -1325,6 +1335,8 @@ message BoxOutputParameter {
   optional uint32 max_nms_num = 9 [default = 0];
   optional uint32 max_post_nms_num = 10 [default = 0];
   optional float min_size = 11 [default = 15]; 
+  optional uint32 num_param_set = 12 [default = 1];
+  optional bool ringpad = 13 [default = false];
 }
 
 // Message that stores parameters used by ProposalTargetLayer
@@ -1339,6 +1351,10 @@ message ProposalTargetParameter {
   optional uint32 img_width = 8;
   optional uint32 img_height = 9;
   optional bool iou_weighted = 10 [default = false];
+  optional bool has_3d_boxes_and_proj_mat_input = 11 [default = false];
+  optional bool output_3d_boxes = 13 [default = false];
+  optional bool output_sample_weight = 14 [default = false];
+  optional bool use_panoramic = 20 [default = false];
 }
 
 // Message that stores parameters used by IOULossLayer

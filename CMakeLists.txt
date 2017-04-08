@@ -37,6 +37,7 @@ caffe_option(BUILD_python_layer "Build the Caffe Python layer" ON)
 caffe_option(USE_OPENCV "Build with OpenCV support" ON)
 caffe_option(USE_LEVELDB "Build with levelDB" ON)
 caffe_option(USE_LMDB "Build with lmdb" ON)
+caffe_option(USE_EIGEN3 "Build with Eigen3" ON)
 caffe_option(ALLOW_LMDB_NOLOCK "Allow MDB_NOLOCK when reading LMDB files (only if necessary)" OFF)
 
 # ---[ Dependencies
@@ -71,10 +72,10 @@ include_directories(BEFORE src) # This is needed for gtest.
 add_subdirectory(src/gtest)
 add_subdirectory(src/caffe)
 add_subdirectory(tools)
-add_subdirectory(examples)
+#add_subdirectory(examples)
 add_subdirectory(python)
-add_subdirectory(matlab)
 add_subdirectory(docs)
+add_subdirectory(nms)
 
 # ---[ Linter target
 add_custom_target(lint COMMAND ${CMAKE_COMMAND} -P ${PROJECT_SOURCE_DIR}/cmake/lint.cmake)

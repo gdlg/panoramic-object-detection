@@ -38,7 +38,7 @@ class Layer {
    * layer.
    */
   explicit Layer(const LayerParameter& param)
-    : layer_param_(param), is_shared_(false) {
+    : layer_param_(param), is_shared_(false), has_noise_(false) {
       // Set phase and copy blobs (if there are any).
       phase_ = param.phase();
       if (layer_param_.blobs_size() > 0) {
@@ -208,6 +208,10 @@ class Layer {
       loss_.resize(top_index + 1, Dtype(0));
     }
     loss_[top_index] = value;
+  }
+
+  inline bool has_noise() {
+    return has_noise_;
   }
 
   /**
@@ -416,6 +420,13 @@ class Layer {
     if (num_loss_weights) {
       CHECK_EQ(top.size(), num_loss_weights) << "loss_weight must be "
           "unspecified or specified once per top blob.";
+
+      loss_weights_idx_ = blobs_.size();
+      blobs_.resize(loss_weights_idx_+1);
+      this->blobs_[0].reset(new Blob<Dtype>(num_loss_weights, 1, 1, 1));
+      has_noise_ = true;
+      Dtype* noise_data =  blobs_[loss_weights_idx_]->mutable_cpu_data();
+
       for (int top_id = 0; top_id < top.size(); ++top_id) {
         const Dtype loss_weight = layer_param_.loss_weight(top_id);
         if (loss_weight == Dtype(0)) { continue; }
@@ -423,6 +434,8 @@ class Layer {
         const int count = top[top_id]->count();
         Dtype* loss_multiplier = top[top_id]->mutable_cpu_diff();
         caffe_set(count, loss_weight, loss_multiplier);
+
+        noise_data[top_id] = -2.*log(2.*loss_weight);
       }
     }
   }
@@ -430,6 +443,9 @@ class Layer {
  private:
   /** Whether this layer is actually shared by other nets*/
   bool is_shared_;
+
+  bool has_noise_;
+  size_t loss_weights_idx_;
 
   /** The mutex for sequential forward if this layer is shared */
   shared_ptr<boost::mutex> forward_mutex_;
@@ -454,6 +470,18 @@ inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
   Lock();
   Dtype loss = 0;
   Reshape(bottom, top);
+
+  if (has_noise_) {
+      // Update the weights based on the noise
+      for (size_t i = 0; i < top.size(); ++i) {
+        Dtype noise =  blobs_[loss_weights_idx_]->cpu_data()[0];
+        Dtype* loss_multiplier_data = top[i]->mutable_cpu_diff();
+        Dtype loss_multiplier = exp(-noise/2.)/2.;
+        loss_multiplier_data[0] = loss_multiplier;
+        this->set_loss(i, loss_multiplier);
+      }
+  }
+
   switch (Caffe::mode()) {
   case Caffe::CPU:
     Forward_cpu(bottom, top);
@@ -490,6 +518,19 @@ template <typename Dtype>
 inline void Layer<Dtype>::Backward(const vector<Blob<Dtype>*>& top,
     const vector<bool>& propagate_down,
     const vector<Blob<Dtype>*>& bottom) {
+
+  if (has_noise_) {
+      // Update the noise
+      for (size_t i = 0; i < top.size(); ++i) {
+        Dtype noise =  blobs_[loss_weights_idx_]->mutable_cpu_data()[0];
+        Dtype* noise_data_diff =  blobs_[loss_weights_idx_]->mutable_cpu_diff();
+        Dtype L = top[i]->cpu_data()[0];
+
+        Dtype noise_diff = 1. - exp(-noise/2.)*L/4.;
+        noise_data_diff[0] = 10. * noise_diff;
+      }
+  }
+
   switch (Caffe::mode()) {
   case Caffe::CPU:
     Backward_cpu(top, propagate_down, bottom);

@@ -41,6 +41,7 @@ class ROIPoolingLayer : public Layer<Dtype> {
   int width_;
   int pooled_height_;
   int pooled_width_;
+  bool ringpad_;
   Dtype spatial_scale_;
   Dtype pad_ratio_;
   Blob<int> max_idx_;

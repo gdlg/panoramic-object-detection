@@ -54,6 +54,13 @@ if(USE_LEVELDB)
   list(APPEND Caffe_LINKER_LIBS ${Snappy_LIBRARIES})
 endif()
 
+# ---[ Eigen
+if(USE_EIGEN3)
+  find_package(Eigen3 REQUIRED)
+  include_directories(SYSTEM ${EIGEN3_INCLUDE_DIR})
+  list(APPEND Caffe_LINKER_LIBS ${EIGEN3_LIBRARIES})
+endif()
+
 # ---[ CUDA
 include(cmake/Cuda.cmake)
 if(NOT HAVE_CUDA)

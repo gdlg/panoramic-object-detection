@@ -56,6 +56,8 @@ class BoxOutputLayer : public Layer<Dtype> {
   float iou_thr_;
   string nms_type_;
   bool output_proposal_with_score_;
+  int num_param_set_;
+  bool ringpad_;
 };
 
 }  // namespace caffe

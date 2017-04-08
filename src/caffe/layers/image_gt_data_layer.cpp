@@ -41,6 +41,7 @@ ImageGtDataLayer<Dtype>::~ImageGtDataLayer<Dtype>() {
 template <typename Dtype>
 void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
+  use_panoramic_ = this->layer_param_.image_gt_data_param().use_panoramic();
   // window_file format
   // repeated:
   //    # image_index
@@ -49,7 +50,7 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
   //    height
   //    width
   //    num_gts
-  //    label ignore x1 y1 x2 y2
+  //    label ignore x1 y1 x2 y2 h w l tx ty tz ry
   //    num_roni
   //    x1 y1 x2 y2
 
@@ -94,6 +95,29 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
     infile >> image_size[0] >> image_size[1] >> image_size[2];
     channels = image_size[0]; img_height = image_size[1]; img_width = image_size[2];
 
+    vector<float> model_mat(16);
+    vector<float> proj_mat(6);
+
+    if (use_panoramic_) {
+        for (int i = 0; i < 16; ++i)
+            infile >> model_mat[i];
+
+        for (int i = 0; i < 6; ++i)
+            infile >> proj_mat[i];
+    } else {
+        vector<float> kitti_proj_mat(12);
+        for (int i = 0; i < 12; ++i)
+            infile >> kitti_proj_mat[i];
+
+        model_mat[0] = 1; model_mat[1] = 0; model_mat[2] = 0; model_mat[3] = kitti_proj_mat[3]/kitti_proj_mat[0];
+        model_mat[4] = 0; model_mat[5] = 1; model_mat[6] = 0; model_mat[7] = kitti_proj_mat[7]/kitti_proj_mat[5];
+        model_mat[8] = 0; model_mat[9] = 0; model_mat[10] = 1; model_mat[11] = kitti_proj_mat[11];
+        model_mat[12] = 0; model_mat[13] = 0; model_mat[14] = 0; model_mat[15] = 1;
+
+        proj_mat[0] = kitti_proj_mat[0]; proj_mat[1] = kitti_proj_mat[1]; proj_mat[2] = kitti_proj_mat[2];
+        proj_mat[3] = kitti_proj_mat[4]; proj_mat[4] = kitti_proj_mat[5]; proj_mat[5] = kitti_proj_mat[6];
+    }
+
     bool fg_img_flag = false;
     // read each box
     int num_windows;
@@ -101,7 +125,9 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
     infile >> num_windows;
     for (int i = 0; i < num_windows; ++i) {
       int label, ignore, x1, y1, x2, y2;
-      infile >> label >> ignore >> x1 >> y1 >> x2 >> y2;
+      float h, w, l, tx, ty, tz, ry;
+      infile >> label >> ignore >> x1 >> y1 >> x2 >> y2
+             >> h >> w >> l >> tx >> ty >> tz >> ry;
 
       vector<float> window(ImageGtDataLayer::NUM);
       window[ImageGtDataLayer::LABEL] = label;
@@ -110,6 +136,13 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       window[ImageGtDataLayer::Y1] = y1;
       window[ImageGtDataLayer::X2] = x2;
       window[ImageGtDataLayer::Y2] = y2;
+      window[ImageGtDataLayer::L] = l;
+      window[ImageGtDataLayer::H] = h;
+      window[ImageGtDataLayer::W] = w;
+      window[ImageGtDataLayer::TX] = tx;
+      window[ImageGtDataLayer::TY] = ty;
+      window[ImageGtDataLayer::TZ] = tz;
+      window[ImageGtDataLayer::RY] = ry;
       
       //check if fg image
       if (ignore == 0) {
@@ -154,6 +187,8 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       }
       windows_.push_back(windows);
       roni_windows_.push_back(roni_windows);
+      proj_mat_.push_back(proj_mat);
+      model_mat_.push_back(model_mat);
     }
 
     if (image_index % 100 == 0) {
@@ -239,17 +274,43 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
 
   // setup for output gt boxes
   output_gt_boxes_ = this->layer_param_.image_gt_data_param().output_gt_boxes();
+  append_3d_info_ = this->layer_param_.image_gt_data_param().append_3d_info();
+
+  gt_dim_ = 7;
+  if (append_3d_info_) gt_dim_ += 7;
+
   if (output_gt_boxes_) {
     //dummy reshape
-    top[label_blob_num_+1]->Reshape(1, 7, 1, 1);    
+    top[label_blob_num_+1]->Reshape(1, gt_dim_, 1, 1);
     for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
       shared_ptr<Blob<Dtype> > label_blob_pointer(new Blob<Dtype>());
-      label_blob_pointer->Reshape(1, 7, 1, 1);
+      label_blob_pointer->Reshape(1, gt_dim_, 1, 1);
       this->prefetch_[i].labels_.push_back(label_blob_pointer);
     }
     LOG(INFO) << "output gt boxes size: " << top[label_blob_num_+1]->num() << ","
         << top[label_blob_num_+1]->channels() << "," << top[label_blob_num_+1]->height() 
         << "," << top[label_blob_num_+1]->width();
+  }
+
+  // setup for output projection matrices
+  output_projection_matrix_ = this->layer_param_.image_gt_data_param().output_projection_matrix();
+  if (output_projection_matrix_) {
+    //dummy reshape
+    top[label_blob_num_+2]->Reshape(batch_size, 6, 1, 1);
+    for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
+      shared_ptr<Blob<Dtype> > label_blob_pointer(new Blob<Dtype>());
+      label_blob_pointer->Reshape(batch_size, 6, 1, 1);
+      this->prefetch_[i].labels_.push_back(label_blob_pointer);
+    }
+    top[label_blob_num_+3]->Reshape(batch_size, 16, 1, 1);
+    for (int i = 0; i < this->PREFETCH_COUNT; ++i) {
+      shared_ptr<Blob<Dtype> > label_blob_pointer(new Blob<Dtype>());
+      label_blob_pointer->Reshape(batch_size, 16, 1, 1);
+      this->prefetch_[i].labels_.push_back(label_blob_pointer);
+    }
+    LOG(INFO) << "output proj mat size: " << top[label_blob_num_+3]->num() << ","
+        << top[label_blob_num_+3]->channels() << "," << top[label_blob_num_+3]->height()
+        << "," << top[label_blob_num_+3]->width();
   }
 
   // data mean, only for mean values instead of mean file
@@ -267,6 +328,7 @@ void ImageGtDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       }
     }
   }
+
 }
 
 template <typename Dtype>
@@ -347,6 +409,15 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   int image_database_size = image_database_.size();
   CHECK_EQ(image_database_size,windows_.size());
   CHECK_EQ(image_database_size,roni_windows_.size());
+  CHECK_EQ(image_database_size,proj_mat_.size());
+  CHECK_EQ(image_database_size,model_mat_.size());
+
+  Dtype* proj_mat_data = NULL;
+  Dtype* model_mat_data = NULL;
+  if (output_projection_matrix_) {
+      proj_mat_data = batch->labels_[label_blob_num_+1]->mutable_cpu_data();
+      model_mat_data = batch->labels_[label_blob_num_+2]->mutable_cpu_data();
+  }
 
   for (int dummy = 0; dummy < batch_size; ++dummy) {
       // sample a window
@@ -355,6 +426,8 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
       const unsigned int image_window_index = image_list_[list_id_];
       vector<vector<float> > windows = windows_[image_window_index];
       vector<vector<float> > roni_windows = roni_windows_[image_window_index];
+      vector<float> proj_mat = proj_mat_[image_window_index];
+      vector<float> model_mat = model_mat_[image_window_index];
       
       bool do_mirror = mirror && PrefetchRand() % 2;
 
@@ -386,6 +459,9 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
           tmp = windows[ww][ImageGtDataLayer<Dtype>::X1];
           windows[ww][ImageGtDataLayer<Dtype>::X1] = windows[ww][ImageGtDataLayer<Dtype>::X2];
           windows[ww][ImageGtDataLayer<Dtype>::X2] = tmp;
+
+          windows[ww][ImageGtDataLayer<Dtype>::RY] = M_PI - windows[ww][ImageGtDataLayer<Dtype>::RY];
+          windows[ww][ImageGtDataLayer<Dtype>::TX] = -windows[ww][ImageGtDataLayer<Dtype>::TX];
         }
         
         for (int ww = 0; ww < roni_windows.size(); ++ww) {
@@ -396,6 +472,9 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
           roni_windows[ww][ImageGtDataLayer<Dtype>::X1] = roni_windows[ww][ImageGtDataLayer<Dtype>::X2];
           roni_windows[ww][ImageGtDataLayer<Dtype>::X2] = tmp;
         }
+
+        proj_mat[3*0 + 2] = img_width - proj_mat[3*0 + 2];
+        proj_mat[3*0 + 3] = - proj_mat[3*0 + 3];
       }
       // resize image if needed
       if (this->layer_param_.image_gt_data_param().has_resize_width()
@@ -411,6 +490,12 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
           // resize bounding boxes
           BoundingboxAffine(windows,width_factor,height_factor,0,0);
           BoundingboxAffine(roni_windows,width_factor,height_factor,0,0);
+
+          for (int j = 0; j < 3; ++j)
+          {
+            proj_mat[3*0 + j] = width_factor * proj_mat[3*0 + j];
+            proj_mat[3*1 + j] = height_factor * proj_mat[3*1 + j];
+          }
         }
       }
 
@@ -513,11 +598,20 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
           BoundingboxAffine(roni_windows,1,1,-crop_x1,-crop_y1);
           rescale_width = round(cv_img.cols*width_rescale_factor); 
           rescale_height = round(cv_img.rows*height_rescale_factor);
+
+          proj_mat[3*0 + 2] -= crop_x1;
+          proj_mat[3*1 + 2] -= crop_y1;
         }
         cv::Size cv_rescale_size;
         cv_rescale_size.width = rescale_width; cv_rescale_size.height = rescale_height;
         cv::resize(cv_img, cv_img, cv_rescale_size, 0, 0, cv::INTER_LINEAR);
         img_height = cv_img.rows, img_width = cv_img.cols;
+
+        for (int j = 0; j < 3; ++j)
+        {
+          proj_mat[3*0 + j] = width_rescale_factor * proj_mat[3*0 + j];
+          proj_mat[3*1 + j] = height_rescale_factor * proj_mat[3*1 + j];
+        }
       }
         
       // resize bounding boxes
@@ -559,30 +653,45 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
       BoundingboxAffine(windows,1,1,src_offset_x-dst_offset_x,src_offset_y-dst_offset_y);
       BoundingboxAffine(roni_windows,1,1,src_offset_x-dst_offset_x,src_offset_y-dst_offset_y);
 
+      proj_mat[3*0 + 2] += src_offset_x-dst_offset_x;
+      proj_mat[3*1 + 2] += src_offset_y-dst_offset_y;
+
       // copy the original image into top_data
       const int channels = cv_img.channels();     
       CHECK_LE(copy_width,template_width); CHECK_LE(copy_height,template_height);
       CHECK_LE(copy_width,img_width); CHECK_LE(copy_height,img_height);
+
       for (int h = src_offset_y; h < src_offset_y+copy_height; ++h) {
         const uchar* ptr = cv_img.ptr<uchar>(h-src_offset_y+dst_offset_y);
         for (int w = src_offset_x; w < src_offset_x+copy_width; ++w) {
           for (int c = 0; c < channels; ++c) {
-            int top_index = ((item_id * channels + c) * template_height + h) * template_width + w;
-            int img_index = (w-src_offset_x+dst_offset_x) * channels + c;
-            Dtype pixel = static_cast<Dtype>(ptr[img_index]);
+            int top_offset = ((item_id * channels + c) * template_height + h) * template_width + w;
+            int img_offset = (w-src_offset_x+dst_offset_x) * channels + c;
+            Dtype pixel = static_cast<Dtype>(ptr[img_offset]);
             if (this->has_mean_values_) {
-              top_data[top_index] = (pixel - this->mean_values_[c]) * scale;
+              top_data[top_offset] = (pixel - this->mean_values_[c]) * scale;
             } else {
-              top_data[top_index] = pixel * scale;
+              top_data[top_offset] = pixel * scale;
             }
           }
         }
       }
+
+      if (output_projection_matrix_) {
+        for (int i = 0; i < 6; ++i) {
+          proj_mat_data[6*item_id + i] = proj_mat[i];
+        }
+        for (int i = 0; i < 16; ++i) {
+          model_mat_data[16*item_id + i] = model_mat[i];
+        }
+      }
+
       trans_time += timer.MicroSeconds();
       timer.Start();
       
       // get window label
       CHECK_EQ(label_channel_,6);
+
       vector<vector<Dtype> > gts;
       vector<int> match_times(windows.size());
       vector<int> max_bb_nn(windows.size());
@@ -592,7 +701,14 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
         Dtype x1 = windows[ww][ImageGtDataLayer<Dtype>::X1];
         Dtype y1 = windows[ww][ImageGtDataLayer<Dtype>::Y1];
         Dtype x2 = windows[ww][ImageGtDataLayer<Dtype>::X2];
-        Dtype y2 = windows[ww][ImageGtDataLayer<Dtype>::Y2];  
+        Dtype y2 = windows[ww][ImageGtDataLayer<Dtype>::Y2];
+        Dtype l  = windows[ww][ImageGtDataLayer<Dtype>::L];
+        Dtype h  = windows[ww][ImageGtDataLayer<Dtype>::H];
+        Dtype w  = windows[ww][ImageGtDataLayer<Dtype>::W];
+        Dtype tx = windows[ww][ImageGtDataLayer<Dtype>::TX];
+        Dtype ty = windows[ww][ImageGtDataLayer<Dtype>::TY];
+        Dtype tz = windows[ww][ImageGtDataLayer<Dtype>::TZ];
+        Dtype ry = windows[ww][ImageGtDataLayer<Dtype>::RY];
         //filter those gt bounding boxes whose centers are outside of the image
         Dtype xc = (x1+x2)/2.0, yc = (y1+y2)/2.0;
         if (xc < 0 || xc >= template_width || yc < 0 || yc >= template_height) {
@@ -607,15 +723,27 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
         }
         
         vector<Dtype> gt(5);
-        gt[0] = x1; gt[1] = y1; gt[2] = x2; gt[3] = y2; 
         gt[4] = windows[ww][ImageGtDataLayer<Dtype>::LABEL];
+
+        gt[0] = x1; gt[1] = y1; gt[2] = x2; gt[3] = y2;
         gts.push_back(gt);
         
         // for gt boxes
-        vector<Dtype> gt_box(7);
-        gt_box[0] = dummy; gt_box[1] = x1; gt_box[2] = y1; gt_box[3] = x2; gt_box[4] = y2;
-        gt_box[5] = windows[ww][ImageGtDataLayer<Dtype>::LABEL]; 
-        gt_box[6] = windows[ww][ImageGtDataLayer<Dtype>::IGNORE];
+        vector<Dtype> gt_box(gt_dim_);
+        size_t off = 0;
+        gt_box[off++] = dummy; gt_box[off++] = x1; gt_box[off++] = y1; gt_box[off++] = x2; gt_box[off++] = y2;
+        gt_box[off++] = windows[ww][ImageGtDataLayer<Dtype>::LABEL];
+        gt_box[off++] = windows[ww][ImageGtDataLayer<Dtype>::IGNORE];
+
+        if (append_3d_info_) {
+          gt_box[off++] = l;
+          gt_box[off++] = h;
+          gt_box[off++] = w;
+          gt_box[off++] = tx;
+          gt_box[off++] = ty;
+          gt_box[off++] = tz;
+          gt_box[off++] = ry;
+        }
         gt_boxes.push_back(gt_box);
       }
 
@@ -647,7 +775,7 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
             int top_index = (item_id * label_channel_ * label_height + h) * label_width + w;
             if (w < label_offset_x || w >= label_offset_x+label_copy_width
                 || h < label_offset_y || h >= label_offset_y+label_copy_height) {
-              top_labels[nn][top_index+5*spatial_dim] = Dtype(1);
+              top_labels[nn][top_index+(label_channel_-1)*spatial_dim] = Dtype(1);
               continue;
             }
             Dtype xx1, yy1, xx2, yy2;
@@ -664,15 +792,17 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
               sum_iou += iou;
             }
             if (sum_iou >= 0.4) {
-              top_labels[nn][top_index+5*spatial_dim] = Dtype(1);
+              top_labels[nn][top_index+(label_channel_-1)*spatial_dim] = Dtype(1);
               continue;
             }
 
             bool flag = false; int match_idx;
             float max_iou = 0;
-            for (int ww = 0; ww < gts.size(); ++ww) {
-              Dtype iou = BoxIOU(gts[ww][0], gts[ww][1] ,gts[ww][2]-gts[ww][0], 
-                                 gts[ww][3]-gts[ww][1], xx1, yy1, xx2-xx1, yy2-yy1, "IOU");
+            auto& g = gts;
+            for (int ww = 0; ww < g.size(); ++ww) {
+              if (windows[ww][ImageGtDataLayer<Dtype>::IGNORE]) continue;
+              Dtype iou = BoxIOU(g[ww][0], g[ww][1] ,g[ww][2]-g[ww][0],
+                                 g[ww][3]-g[ww][1], xx1, yy1, xx2-xx1, yy2-yy1, "IOU");
               if (iou > max_iou) {
                 flag = true; match_idx = ww; max_iou = iou;
               }
@@ -681,29 +811,32 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
               }
             }  
             if (flag && max_iou > fg_threshold) {
-              float x1 = windows[match_idx][ImageGtDataLayer<Dtype>::X1];
-              float y1 = windows[match_idx][ImageGtDataLayer<Dtype>::Y1];
-              float x2 = windows[match_idx][ImageGtDataLayer<Dtype>::X2];
-              float y2 = windows[match_idx][ImageGtDataLayer<Dtype>::Y2];
+              float x1 = g[match_idx][0];
+              float y1 = g[match_idx][1];
+              float x2 = g[match_idx][2];
+              float y2 = g[match_idx][3];
               int ignore = windows[match_idx][ImageGtDataLayer<Dtype>::IGNORE];
               if (ignore == 0) {
                 top_labels[nn][top_index] = windows[match_idx][ImageGtDataLayer<Dtype>::LABEL];
               } else {
                 top_labels[nn][top_index] = 0;
               }
+
               top_labels[nn][top_index+spatial_dim] = (x1+x2)/Dtype(2.0);
               top_labels[nn][top_index+2*spatial_dim] = (y1+y2)/Dtype(2.0);
               top_labels[nn][top_index+3*spatial_dim] = x2-x1;
               top_labels[nn][top_index+4*spatial_dim] = y2-y1;
+
               match_times[match_idx]++;
             } 
             // iou (if label==0&&iou>fg_threshold, it will be ignored)
-            top_labels[nn][top_index+5*spatial_dim] = max_iou;
+            top_labels[nn][top_index+(label_channel_-1)*spatial_dim] = max_iou;
           }
       }
 
       //pick up those gt bounding boxes that are not matched yet
-      for (int ww = 0; ww < gts.size(); ++ww) {
+      auto& g = gts;
+      for (int ww = 0; ww < g.size(); ++ww) {
         if (windows[ww][ImageGtDataLayer<Dtype>::IGNORE] == 0 && match_times[ww] <= 0){ 
           // if iou is too small, still ignored
           if (max_bb_iou[ww] < 0.2) {
@@ -714,10 +847,11 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
           const int label_width = round(template_width/float(downsample_rates_[miss_nn]));
           const int spatial_dim = label_height*label_width;
 
-          const float x1 = windows[ww][ImageGtDataLayer<Dtype>::X1];
-          const float y1 = windows[ww][ImageGtDataLayer<Dtype>::Y1];
-          const float x2 = windows[ww][ImageGtDataLayer<Dtype>::X2];
-          const float y2 = windows[ww][ImageGtDataLayer<Dtype>::Y2];
+          float x1 = g[ww][0];
+          float y1 = g[ww][1];
+          float x2 = g[ww][2];
+          float y2 = g[ww][3];
+
           Dtype xc = (x1+x2)/Dtype(2.0), yc = (y1+y2)/Dtype(2.0);
           int hc = floor(yc/downsample_rates_[miss_nn]);
           hc = std::max(0,hc); hc = std::min(label_height-1,hc);
@@ -728,7 +862,8 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
             continue; 
           }
           top_labels[miss_nn][miss_index] = windows[ww][ImageGtDataLayer<Dtype>::LABEL];
-          top_labels[miss_nn][miss_index+spatial_dim] = xc; 
+
+          top_labels[miss_nn][miss_index+spatial_dim] = xc;
           top_labels[miss_nn][miss_index+2*spatial_dim] = yc;
           top_labels[miss_nn][miss_index+3*spatial_dim] = x2-x1;
           top_labels[miss_nn][miss_index+4*spatial_dim] = y2-y1;
@@ -812,19 +947,20 @@ void ImageGtDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   // output gt boxes [img_id, x1, y1, x2, y2, label, ignored] for detection subnet
   if (output_gt_boxes_) {
     int num_gt_boxes = gt_boxes.size();
-    const int gt_dim = 7;
     // for special case when there is no gt
     if (num_gt_boxes <= 0) {
-      batch->labels_[label_blob_num_]->Reshape(1, gt_dim, 1, 1);
+      batch->labels_[label_blob_num_]->Reshape(1, gt_dim_, 1, 1);
       Dtype* gt_boxes_data = batch->labels_[label_blob_num_]->mutable_cpu_data();
       gt_boxes_data[0]=0; gt_boxes_data[1]=1; gt_boxes_data[2]=1; gt_boxes_data[3]=2;
       gt_boxes_data[4]=2; gt_boxes_data[5]=1; gt_boxes_data[6]=1;
+      for (int i = 7; i < gt_dim_; ++i)
+          gt_boxes_data[i] = 1;
     } else {
-      batch->labels_[label_blob_num_]->Reshape(num_gt_boxes, gt_dim, 1, 1);
+      batch->labels_[label_blob_num_]->Reshape(num_gt_boxes, gt_dim_, 1, 1);
       Dtype* gt_boxes_data = batch->labels_[label_blob_num_]->mutable_cpu_data();
       for (int i = 0; i < num_gt_boxes; i++) {
-        for (int j = 0; j < gt_dim; j++) {
-          gt_boxes_data[i*gt_dim+j] = gt_boxes[i][j];
+        for (int j = 0; j < gt_dim_; j++) {
+          gt_boxes_data[i*gt_dim_+j] = gt_boxes[i][j];
         }
       }
     }
