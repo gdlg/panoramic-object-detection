@@ -27,7 +27,9 @@ This code base was tested using CUDA 9.0, CuDNN 7.0 and OpenCV 3.4.0.
 
 Our inference script is based on panoramas that have been cropped vertically due to memory contraints. To use the same crop as in our paper, take a 2048×1024 panorama and crop it vertically to the range [424,724] to get a 2048x300 panorama.
 
-1. Download a dataset of 360° images such as [our dataset](https://hades.ext.dur.ac.uk/~greg/datasets/synthetic-panoramic-dataset.tar.gz) of synthetic images based on the CARLA simulator. You can also use images from Mapillary (see the [list](https://hochet.info/~gregoire/models/mapillary_image_keys.txt) of Mapillary image keys that we used for experimentation).
+1. Download a dataset of 360° images such as [our dataset](https://hochet.info/~gregoire/eccv2018/datasets/synthetic-panoramic-dataset-v2.tar.gz) of synthetic images based on the CARLA simulator. You can also use images from Mapillary (see the [list](https://hochet.info/~gregoire/models/mapillary_image_keys.txt) of Mapillary image keys that we used for experimentation).
+
+*Note that the dataset was updated on the 25/02/2020 to improve the ground truth bounding box quality and add 3D object detection evaluation metrics. The original dataset is still available [here](https://hochet.info/~gregoire/eccv2018/datasets/synthetic-panoramic-dataset.tar.gz).*
 
 2. (optional). Fetch our pretrained models:
 ```
